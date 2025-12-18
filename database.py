@@ -18,6 +18,13 @@ async def init_db():
         """)
 
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT
+        )
+        """)
+
+        await db.execute("""
                 CREATE TABLE IF NOT EXISTS user_plants (
                     user_id INTEGER,
                     plant_name TEXT,
@@ -85,7 +92,7 @@ async def update_user_date(user_id: int, plant_name: str, field: str, date_iso: 
 async def update_notes(user_id: int, plant_name: str, notes: str):
     async with aiosqlite.connect(DB) as db:
         await db.execute(
-            "UPDATE user_plants SET notes WHERE user_id = ? AND plant_name = ?",
+            "UPDATE user_plants SET notes = ? WHERE user_id = ? AND plant_name = ?",
             (notes, user_id, plant_name)
         )
         await db.commit()
@@ -94,7 +101,16 @@ async def update_notes(user_id: int, plant_name: str, notes: str):
 async def get_plant_default(name: str):
     async with aiosqlite.connect(DB) as db:
         cur = await db.execute(
-            "SELECT water_days, feed_days, trans_days FROM plants WHERE name = ?",
+            "SELECT water_days, feed_days, transplant_days FROM plants WHERE name = ?",
             (name,)
         )
-        return cur.fetchone()
+        return await cur.fetchone()
+
+
+async def add_user(user_id: int, username: str | None):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
+            (user_id, username)
+        )
+        await db.commit()
