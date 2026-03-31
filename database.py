@@ -1,8 +1,9 @@
 import aiosqlite
 from datetime import date
 from plants_data import plants_data
+from config import DB_PASSWORD
 
-DB = "plants.db"
+DB = DB_PASSWORD
 
 
 async def init_db():
