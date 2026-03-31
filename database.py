@@ -114,3 +114,13 @@ async def add_user(user_id: int, username: str | None):
             (user_id, username)
         )
         await db.commit()
+
+
+async def delete_plant(user_id: int, plant_name: str):
+    async with aiosqlite.connect(DB) as db:
+        await db.execute(
+            "DELETE FROM get_user_plant WHERE user_id = ? AND plant_name = ?",
+            (user_id, plant_name)
+        )
+        await db.commit()
+

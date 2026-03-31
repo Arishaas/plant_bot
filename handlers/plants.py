@@ -11,7 +11,7 @@ async def addplant(message: Message, command: CommandObject):
     name = (command.args or "").strip().lower()
 
     if not name:
-        return await message.answer("Использование: /addplant <название>")
+        return await message.answer("➕🌺 Использование: /addplant <название>")
 
     await add_user_plant(message.from_user.id, name)
     await message.answer(f"Добавлено: {name}")
@@ -22,18 +22,18 @@ async def myplants(message: Message):
     plants = await get_user_plants(message.from_user.id)
 
     if not plants:
-        return await message.answer("У вас еще нет растений. Добавьте через /addplant")
+        return await message.answer("🌺‼️ У вас еще нет растений. Добавьте через /addplant")
 
-    text = "Ваши растения:\n\n"
+    text = "🌺 Ваши растения:\n\n"
     for name, lw, lf, lt, notes in plants:
         text += (
             f"{name}\n"
-            f"Полив: {lw}\n"
-            f"Подкормка: {lf}\n"
-            f"Пересадка: {lt}\n"
+            f"💧 Полив: {lw}\n"
+            f"🧪 Подкормка: {lf}\n"
+            f"🔄 Пересадка: {lt}\n"
         )
         if notes:
-            text += f"Заметка: {notes}\n"
+            text += f"📝 Заметка: {notes}\n"
         text += "\n"
 
     await message.answer(text)
