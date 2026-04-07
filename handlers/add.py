@@ -8,7 +8,7 @@ from database import add_user_plant
 router = Router()
 
 
-@router.message(lambda m: m.text == "➕ Добавить растение")
+@router.message(lambda m: m.text and "➕ Добавить растение" in m.text)
 async def add_start(message: Message, state: FSMContext):
     await message.answer("🌱 Введите название растения")
     await state.set_state(AddPlant.waiting_for_name)

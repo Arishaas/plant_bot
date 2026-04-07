@@ -1,120 +1,124 @@
 from aiogram import Router
-from aiogram.filters import Command
 from aiogram.types import Message
-from aiogram.filters.command import CommandObject
-from utils import pars_datetoken, days_until
-from database import (
-    get_user_plant, update_user_date, update_notes, get_plant_default, delete_plant
-)
+from aiogram.fsm.context import FSMContext
+
+from plant_states import AddPlant, DeletePlant
+from database import add_user_plant, get_user_plants, delete_plant
 
 router = Router()
 
 
-@router.message(Command("water"))
-async def water(message: Message, command: CommandObject):
-    name = (command.args or "").strip().lower()
-    if not name:
-        return await message.answer("💧‼️ Использование: /water <название>")
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Нет такого растения")
-    today = pars_datetoken("today")
-    await update_user_date(message.from_user.id, name, "last_water", today)
-    await message.answer(f"💧✅ Полив обновлён для: {name} — {today}")
+async def start_action(message: Message, state: FSMContext, prompt_text: str, new_state):
+    current_state = await state.get_state()
+    if current_state:
+        return await message.answer("⚠️ Сначала завершите текущую операцию!")
+    await message.answer(prompt_text)
+    await state.set_state(new_state)
 
 
-@router.message(Command("feed"))
-async def feed(message: Message, command: CommandObject):
-    args = (command.args or "").split()
-    if not args:
-        return await message.answer("📅‼️Использование: /feed <название> [дата]")
-
-    name = args[0].lower()
-    date_token = args[1] if len(args) > 1 else "today"
-    date_iso = pars_datetoken(date_token)
-    if not date_iso:
-        return await message.answer("❌📅 Неверная дата. Используйте YYYY-MM-DD или 'today'")
-
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Нет такого растения")
-
-    await update_user_date(message.from_user.id, name, "last_feed", date_iso)
-    await message.answer(f"🧪✅ Подкормка обновлена для: {name} — {date_iso}")
-
-
-@router.message(Command("transplant"))
-async def transplant(message: Message, command: CommandObject):
-    args = (command.args or "").split()
-    if not args:
-        return await message.answer("📎‼️ Использование: /transplant <название> [дата]")
-
-    name = args[0].lower()
-    date_token = args[1] if len(args) > 1 else "today"
-    date_iso = pars_datetoken(date_token)
-    if not date_iso:
-        return await message.answer("❌📅 Неверная дата. Используйте YYYY-MM-DD или 'today'")
-
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Нет такого растения")
-
-    await update_user_date(message.from_user.id, name, "last_trans", date_iso)
-    await message.answer(f"🔄🌺✅ Пересадка обновлена для: {name} — {date_iso}")
-
-
-@router.message(Command("status"))
-async def status(message: Message, command: CommandObject):
-    name = (command.args or "").strip().lower()
-    if not name:
-        return await message.answer("🔒🖊 Использование: /status <название>")
-
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Нет такого растения")
-
-    _, lw, lf, lt, notes = row
-    defaults = await get_plant_default(name)
-    w, f, t = defaults if defaults else (7, 30, 365)
-
-    text = (
-        f"🌱 {name}\n"
-        f"💧 Полив через: {max(0, days_until(lw, w))} дн.\n"
-        f"🧪 Подкормка через: {max(0, days_until(lf, f))} дн.\n"
-        f"🔄 Пересадка через: {max(0, days_until(lt, t))} дн."
+@router.message(lambda m: m.text == "➕ Добавить растение")
+async def add_plant_start(message: Message, state: FSMContext):
+    await start_action(
+        message,
+        state,
+        "🌱 Введите название нового растения",
+        AddPlant.waiting_for_name
     )
-    if notes:
-        text += f"\n📝 Заметка: {notes}"
+
+
+@router.message(AddPlant.waiting_for_name)
+async def add_plant_finish(message: Message, state: FSMContext):
+    name = message.text.strip().lower()
+    plants = await get_user_plants(message.from_user.id)
+    plant_names = [p[0].lower() for p in plants]
+
+    if name in plant_names:
+        await state.update_data(duplicate_name=name)
+        await state.set_state(AddPlant.waiting_for_duplicate_confirm)
+        return await message.answer(
+            f"⚠️ Растение «{name}» уже есть в списке.\n"
+            "Добавить ещё одно с новым именем? (да/нет)"
+        )
+
+    await add_user_plant(message.from_user.id, name)
+    await message.answer(f"➕🌺 Растение добавлено: {name}")
+    await state.clear()
+
+
+@router.message(AddPlant.waiting_for_duplicate_confirm)
+async def add_duplicate_confirm(message: Message, state: FSMContext):
+    answer = message.text.strip().lower()
+    if answer not in {"да", "нет", "yes", "no"}:
+        return await message.answer("Напишите «да» или «нет».")
+
+    if answer in {"нет", "no"}:
+        await message.answer("Ок, не добавляю.")
+        await state.clear()
+        return
+
+    data = await state.get_data()
+    base_name = data.get("duplicate_name", "").strip().lower()
+    if not base_name:
+        await message.answer("❌ Не удалось определить название. Попробуйте снова.")
+        await state.clear()
+        return
+
+    plants = await get_user_plants(message.from_user.id)
+    plant_names = {p[0].lower() for p in plants}
+
+    idx = 2
+    new_name = f"{base_name} {idx}"
+    while new_name in plant_names:
+        idx += 1
+        new_name = f"{base_name} {idx}"
+
+    await add_user_plant(message.from_user.id, new_name)
+    await message.answer(f"➕🌺 Добавлено как: {new_name}")
+    await state.clear()
+
+
+@router.message(lambda m: m.text == "🌺 Мои растения")
+async def show_plants(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state:
+        return await message.answer("⚠️ Сначала завершите текущую операцию!")
+
+    plants = await get_user_plants(message.from_user.id)
+    if not plants:
+        return await message.answer("🌱 У вас пока нет растений")
+
+    text = "🌺 Ваши растения:\n\n"
+    for idx, plant in enumerate(plants, start=1):
+        text += f"{idx}. {plant[0]}\n"
 
     await message.answer(text)
 
 
-@router.message(Command("note"))
-async def note(message: Message, command: CommandObject):
-    if not command.args or len(command.args.split()) < 2:
-        return await message.answer("📝‼️ Использование: /note <растение> <текст>")
+@router.message(lambda m: m.text == "❌🗑 Удаление растения")
+async def delete_start(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state:
+        return await message.answer("⚠️ Сначала завершите текущую операцию!")
 
-    name, text = command.args.split(maxsplit=1)
-    name = name.lower()
+    plants = await get_user_plants(message.from_user.id)
+    if not plants:
+        return await message.answer("🌱 У вас пока нет растений для удаления")
 
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Растение не найдено")
+    plant_names = [p[0] for p in plants]
+    text = "🗑 Выберите растение для удаления (введите точное название):\n"
+    text += "\n".join(plant_names)
+    await message.answer(text)
+    await state.set_state(DeletePlant.waiting_for_name)
 
-    await update_notes(message.from_user.id, name, text)
-    await message.answer("📝✅ Заметка сохранена")
 
-
-@router.message(Command("delete"))
-async def delete(message: Message, command: CommandObject):
-    name = (command.args or "").strip().lower()
-    if not name:
-        return await message.answer("❌🗑 Использование: /delete <растение>")
-
-    row = await get_user_plant(message.from_user.id, name)
-    if not row:
-        return await message.answer("🌺❌ Растение не найдено")
+@router.message(DeletePlant.waiting_for_name)
+async def delete_finish(message: Message, state: FSMContext):
+    name = message.text.strip().lower()
+    plants = await get_user_plants(message.from_user.id)
+    plant_names = [p[0].lower() for p in plants]
+    if name not in plant_names:
+        return await message.answer("❌ Растение не найдено. Введите точное название")
 
     await delete_plant(message.from_user.id, name)
-
-    await message.answer("🌺🗑 Растение удалено")
+    await message.answer(f"🗑 Растение удалено: {name}")
+    await state.clear()
